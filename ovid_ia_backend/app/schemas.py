@@ -1,9 +1,10 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Literal
 
 class AlertaRisco(BaseModel):
     """Modelo que representa um alerta de risco encontrado em uma cláusula."""
     nivel_risco: str
+    categoria: Literal["RISCO JURÍDICO", "ERRO ORTOGRÁFICO/GRAMATICAL", "AMBIGUIDADE TEXTUAL"]
     clausula: str
     descricao_risco: str
     recomendacao: str
@@ -25,6 +26,11 @@ class ResultadoBusca(BaseModel):
     texto_recuperado: str
     score: float
     metadados: Dict[str, Any]
+
+class RespostaBuscaRAG(BaseModel):
+    """Modelo para retornar a resposta final do LLM com base no RAG."""
+    resposta_ia: str
+    fontes: List[ResultadoBusca]
 
 # --- SPRINT 3 SCHEMAS ---
 
@@ -58,7 +64,7 @@ class AlertaPrazo(BaseModel):
     numero_processo: str
     tipo_ato_judicial: str
     dias_prazo: int
-    data_fatal: date
+    data_fatal: str
     criticidade: str
 
 class ResultadoTriagem(BaseModel):

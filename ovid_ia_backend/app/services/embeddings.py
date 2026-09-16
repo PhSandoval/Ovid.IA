@@ -1,15 +1,20 @@
 from sentence_transformers import SentenceTransformer
-from typing import List
 
-# Inicializa o modelo de embeddings leve.
-# Instanciado globalmente para ser carregado na memória apenas uma vez na inicialização da API.
-modelo_embedding = SentenceTransformer('all-MiniLM-L6-v2')
+# Inicializa o modelo de embeddings (rápido e pequeno para testes locais)
+# O modelo será baixado na primeira vez que rodar
+try:
+    embedder = SentenceTransformer('all-MiniLM-L6-v2')
+except Exception as e:
+    print(f"Erro ao carregar SentenceTransformer: {e}")
+    embedder = None
 
-def gerar_embedding(texto: str) -> List[float]:
+def gerar_embedding(texto: str) -> list[float]:
     """
-    Gera um embedding (vetor denso) para o texto fornecido.
-    Retorna uma lista de floats representando o texto no espaço vetorial.
+    Recebe uma string e retorna um vetor (lista de floats) que a representa matematicamente.
     """
-    # O método encode retorna um numpy array, que convertemos para uma lista nativa do Python
-    vetor = modelo_embedding.encode(texto)
-    return vetor.tolist()
+    if not embedder:
+        return []
+    
+    # O método encode retorna um array do numpy, que convertemos para lista nativa do Python
+    vetor = embedder.encode(texto).tolist()
+    return vetor

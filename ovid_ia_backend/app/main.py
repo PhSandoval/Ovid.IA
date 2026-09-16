@@ -11,12 +11,13 @@ from datetime import date
 
 from app.schemas import (
     ResumoAuditoria, AlertaRisco, DocumentoIndexacao, ResultadoBusca,
+    RespostaBuscaRAG,
     ResumoAutos, RequisicaoRedacao, RespostaRedacao,
     PublicacaoDO, AlertaPrazo, ResultadoTriagem
 )
 import ollama
 import json
-from app.services.parser import extrair_texto_pdf
+from app.services.parser import extrair_texto_pdf_em_lotes, extrair_texto_pdf
 from app.services.vector_db import adicionar_documento, buscar_similaridade
 from app.services.prazos import calcular_prazo_fatal
 
@@ -26,67 +27,147 @@ app = FastAPI(
     version="1.0.0"
 )
 
-@app.post("/contratos/analisar", response_model=ResumoAuditoria)
-async def analisar_contrato(arquivo: UploadFile = File(...)) -> ResumoAuditoria:
+from fastapi.responses import StreamingResponse
+import asyncio
+
+@app.post("/contratos/analisar")
+async def analisar_contrato(arquivo: UploadFile = File(...)):
     """
-    Endpoint (Sprint 1) para analisar contratos em formato PDF.
-    Extrai o texto do PDF e retorna um payload validado contendo os riscos mapeados.
+    Endpoint (Sprint 1 modificado) para analisar contratos massivos em formato PDF.
+    Extrai o texto em lotes (Chunking) e faz streaming do progresso (SSE/JSONLines) para o Frontend.
     """
     start_time = time.time()
-    logger.info(f"Iniciando análise de contrato: {arquivo.filename}")
+    logger.info(f"Iniciando análise de contrato (Fatiamento): {arquivo.filename}")
     
     if not arquivo.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos.")
 
     try:
-        texto = await extrair_texto_pdf(arquivo)
+        lotes = await extrair_texto_pdf_em_lotes(arquivo)
     except Exception as e:
         logger.error(f"Erro extraindo texto: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao processar PDF: {str(e)}")
 
-    if not texto.strip():
+    if not lotes:
         raise HTTPException(status_code=400, detail="O documento parece estar vazio ou não possui OCR legível.")
 
     system_prompt = """
-Você é um advogado especialista em compliance e auditoria de contratos.
-Analise o texto do contrato fornecido e identifique cláusulas abusivas, penalidades desproporcionais e ausência de termos obrigatórios.
+Você é um Auditor Jurídico Sênior implacável. Analise o trecho do contrato fornecido.
+Sua única tarefa é auditar e extrair Riscos Jurídicos de compliance e Ambiguidade Textual. 
+IGNORE ERROS ORTOGRÁFICOS E GRAMATICAIS. Concentre sua inteligência puramente no risco do negócio.
+
+Classifique os apontamentos em:
+1. RISCO JURÍDICO: Cláusulas abusivas, multas acima de 10%, juros abusivos, prazos irreais, falta de rescisão imotivada, renúncia de direitos (CDC) e ELEIÇÃO DE FORO fora do Estado de São Paulo ou no exterior (ex: Estados Unidos).
+2. AMBIGUIDADE TEXTUAL: Frases confusas que geram brechas ou dupla interpretação (ex: prazos indefinidos).
+
+Regras de Ouro:
+- Se a cláusula não tem nome no trecho atual, chame-a de "Trecho Analisado". NÃO INVENTE nomes.
+- VOCÊ DEVE ESCREVER 100% DA SUA RESPOSTA EM PORTUGUÊS DO BRASIL (PT-BR).
+
+Para não esquecer nenhum risco, preencha o campo "analise_passo_a_passo" detalhando os abusos contratuais encontrados ANTES de listar os alertas.
+
 Você deve responder ESTRITAMENTE em formato JSON, utilizando a seguinte estrutura:
 
 {
+  "analise_passo_a_passo": "Escreva aqui um parágrafo longo detalhando cada abuso jurídico encontrado...",
   "nivel_risco_geral": "ALTO",
-  "total_alertas": 1,
+  "total_alertas": 2,
   "alertas": [
     {
       "nivel_risco": "Risco Extremo",
+      "categoria": "RISCO JURÍDICO",
       "clausula": "Nome ou número da Cláusula",
-      "descricao_risco": "O que está errado nesta cláusula",
-      "recomendacao": "Como alterar a redação"
+      "descricao_risco": "Por que esta cláusula é abusiva ou ilegal?",
+      "recomendacao": "Como reescrever a cláusula"
     }
   ]
 }
 """
-    try:
-        response = ollama.chat(
-            model='llama3.1',
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": texto}
-            ],
-            format='json',
-            options={"temperature": 0.0}
-        )
-        json_resp = json.loads(response['message']['content'])
+
+    async def stream_generator():
+        todos_alertas = []
+        risco_final = "BAIXO"
+        total_lotes = len(lotes)
         
-        # Garantir que o nome do arquivo seja injetado
-        if "nome_arquivo" not in json_resp:
-            json_resp["nome_arquivo"] = arquivo.filename
+        for i, lote_texto in enumerate(lotes):
+            # Avisa o frontend que INICIOU o lote X (0% deste lote)
+            yield json.dumps({
+                "status": "processando",
+                "lote_atual": i + 1,
+                "total_lotes": total_lotes
+            }) + "\n"
+            # Força o FastAPI a disparar o pacote pela rede imediatamente antes de travar no Ollama
+            await asyncio.sleep(0.1)
             
-        resumo = ResumoAuditoria(**json_resp)
-        logger.info(f"Análise concluída em {time.time() - start_time:.2f}s")
-        return resumo
-    except Exception as e:
-        logger.error(f"Erro na inferência: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro na inferência do Ollama: {str(e)}")
+            logger.info(f"Analisando lote {i+1} de {total_lotes}...")
+            
+            # Executa o Ollama em uma thread separada para NÃO bloquear o Event Loop do FastAPI
+            response = await asyncio.to_thread(
+                ollama.chat,
+                model='hermes3:8b',
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": lote_texto}
+                ],
+                format='json',
+                options={"temperature": 0.0}
+            )
+            
+            try:
+                json_resp = json.loads(response['message']['content'])
+                
+                # Só adiciona na matriz final se de fato existirem alertas na lista
+                alertas_lote = json_resp.get("alertas", [])
+                if isinstance(alertas_lote, list) and len(alertas_lote) > 0:
+                    todos_alertas.extend(alertas_lote)
+                    
+                # Hierarquia de risco: EXTREMO > ALTO > MÉDIO > BAIXO
+                risco_lote = json_resp.get("nivel_risco_geral", "BAIXO").upper()
+                
+                niveis_peso = {"BAIXO": 1, "MÉDIO": 2, "MEDIO": 2, "ALTO": 3, "EXTREMO": 4, "CRÍTICO": 4, "CRITICO": 4}
+                peso_atual = niveis_peso.get(risco_final, 1)
+                peso_lote = niveis_peso.get(risco_lote, 1)
+                
+                if peso_lote > peso_atual:
+                    risco_final = risco_lote
+                    
+            except Exception as parse_e:
+                logger.error(f"Erro de JSON no lote {i+1}: {parse_e}")
+                
+            # Avisa o frontend que TERMINOU o lote X (100% deste lote)
+            yield json.dumps({
+                "status": "lote_concluido",
+                "lote_atual": i + 1,
+                "total_lotes": total_lotes
+            }) + "\n"
+            await asyncio.sleep(0.05)
+                
+        # Remove duplicatas exatas geradas pela sobreposição (Overlap) de lotes
+        alertas_unicos = []
+        descricoes_vistas = set()
+        for alerta in todos_alertas:
+            desc = alerta.get("descricao_risco", "").strip().lower()
+            if desc not in descricoes_vistas:
+                descricoes_vistas.add(desc)
+                alertas_unicos.append(alerta)
+                
+        # Monta a resposta final
+        resumo = {
+            "nome_arquivo": arquivo.filename,
+            "nivel_risco_geral": risco_final,
+            "total_alertas": len(alertas_unicos),
+            "alertas": alertas_unicos
+        }
+        
+        logger.info(f"Análise concluída em {time.time() - start_time:.2f}s com {len(alertas_unicos)} alertas consolidados.")
+        
+        # Envia o resultado final
+        yield json.dumps({
+            "status": "concluido",
+            "resultado": resumo
+        }) + "\n"
+
+    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
 
 # --- MÓDULO 2: Busca de Jurisprudência (Motor RAG Local) ---
 
@@ -110,17 +191,89 @@ async def indexar_jurisprudencia(doc: DocumentoIndexacao):
 class QueryBusca(BaseModel):
     query: str
 
-@app.post("/jurisprudencia/buscar", response_model=List[ResultadoBusca])
+@app.post("/jurisprudencia/buscar", response_model=RespostaBuscaRAG)
 async def buscar_jurisprudencia(busca: QueryBusca):
     """
     Recebe uma query (tese do advogado), converte em embedding e busca os 3 resultados 
     mais semanticamente próximos na base vetorial local.
+    Em seguida, usa o Ollama para redigir uma resposta com base APENAS nos precedentes.
     """
     try:
+        # 1. Recuperação Vetorial (ChromaDB)
         resultados = buscar_similaridade(query=busca.query, limite=3)
-        return resultados
+        
+        if not resultados:
+            return RespostaBuscaRAG(
+                resposta_ia="Nenhum precedente encontrado na base de dados para esta busca.",
+                fontes=[]
+            )
+            
+        # 2. Geração Aumentada por Recuperação (Ollama)
+        contexto_textos = "\n\n---\n\n".join([f"Documento:\n{r['texto_recuperado']}" for r in resultados])
+        
+        system_prompt = f"""
+Você é um assistente jurídico de pesquisa.
+Responda à pergunta do usuário utilizando ESTRITAMENTE as informações dos parágrafos fornecidos abaixo.
+Se a informação não estiver nos parágrafos, diga que não há informações suficientes.
+Não invente precedentes, nem adicione conhecimentos de fora.
+
+PARÁGRAFOS ENCONTRADOS:
+{contexto_textos}
+"""
+        
+        response = ollama.chat(
+            model='hermes3:8b',
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": busca.query}
+            ],
+            options={"temperature": 0.0}
+        )
+        
+        resposta_texto = response['message']['content']
+        
+        return RespostaBuscaRAG(
+            resposta_ia=resposta_texto,
+            fontes=[
+                ResultadoBusca(
+                    texto_recuperado=r['texto_recuperado'],
+                    score=r['score'],
+                    metadados=r['metadados']
+                ) for r in resultados
+            ]
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao buscar jurisprudência: {str(e)}")
+        logger.error(f"Erro no RAG local: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/jurisprudencia/buscar_externo", response_model=RespostaBuscaRAG)
+async def buscar_jurisprudencia_externa(busca: QueryBusca):
+    """
+    Endpoint preparado para a integração com APIs Jurídicas Oficiais (Datajud CNJ ou Jusbrasil/Escavador).
+    Atualmente em modo "Placeholder" aguardando as credenciais de produção.
+    """
+    try:
+        # TODO: Inserir aqui a requisição HTTP GET oficial para o Datajud (CNJ) ou Jusbrasil (usando API Key)
+        # Exemplo teórico:
+        # response = requests.get("https://api-publica.datajud.cnj.jus.br/api_docs/pesquisa", headers={"API-Key": "SUA_CHAVE"})
+        # ementas_completas = response.json()
+        
+        aviso_arquitetura = (
+            "⚠️ **Acesso à Nuvem Pausado (Pendente de API Oficial)**\n\n"
+            "Conforme estabelecido no Plano Diretor, evitamos práticas de web scraping amador (como DuckDuckGo/Snippets) "
+            "que causam mutilação de ementas e alucinação por falta de contexto (Garbage In, Garbage Out).\n\n"
+            "Para testes profissionais na diretoria, retorne à aba de 'Busca Local' e indexe ementas manualmente, "
+            "ou configure uma Chave de API oficial (Datajud/Jusbrasil) no arquivo .env do backend."
+        )
+        
+        return RespostaBuscaRAG(
+            resposta_ia=aviso_arquitetura,
+            fontes=[]
+        )
+        
+    except Exception as e:
+        logger.error(f"Erro no endpoint de integração externa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- MÓDULO 3: Resumo de Autos ---
 
@@ -154,7 +307,7 @@ Você é um assistente jurídico. Leia a petição inicial e extraia ESTRITAMENT
 """
     try:
         response = ollama.chat(
-            model='llama3.1',
+            model='hermes3:8b',
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": texto}
@@ -193,7 +346,7 @@ INSTRUÇÕES:
 """
     try:
         response = ollama.chat(
-            model='llama3.1',
+            model='hermes3:8b',
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "Por favor, redija a peça."}
@@ -234,7 +387,7 @@ NÃO FAÇA CONTAS MATEMÁTICAS.
 """
     try:
         response = ollama.chat(
-            model='llama3.1',
+            model='hermes3:8b',
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": pub.texto_publicacao}
@@ -264,3 +417,194 @@ NÃO FAÇA CONTAS MATEMÁTICAS.
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro na triagem de prazo: {str(e)}")
+
+@app.post("/contratos/revisar_gramatica")
+async def revisar_gramatica_pdf(arquivo: UploadFile = File(...)):
+    """Recebe um PDF, faz OCR e faz streaming da análise apenas de Erros Ortográficos e Gramaticais."""
+    start_time = time.time()
+    
+    lotes = await extrair_texto_pdf_em_lotes(arquivo, limite_caracteres=2000, overlap=300)
+
+    if not lotes:
+        raise HTTPException(status_code=400, detail="O documento parece estar vazio ou não possui OCR legível.")
+
+    system_prompt = """
+Você é um Professor de Língua Portuguesa extremamente rigoroso. Analise o trecho do contrato fornecido.
+Sua ÚNICA tarefa é caçar e apontar ERROS ORTOGRÁFICOS, GRAMATICAIS e DE CONCORDÂNCIA.
+IGNORE qualquer aspecto jurídico, legal ou de compliance. Foque apenas na língua portuguesa do Brasil.
+
+Regras de Ouro:
+- SÓ APONTE erro se a palavra realmente estiver escrita errada (ex: "asinar", "servissos", "nós vai").
+- NÃO sugira mudar o estilo do texto ou trocar sinônimos que já estão corretos.
+- VOCÊ DEVE ESCREVER 100% DA SUA RESPOSTA EM PORTUGUÊS DO BRASIL (PT-BR).
+
+Para não esquecer nenhum erro, preencha o campo "analise_passo_a_passo" listando todas as palavras erradas encontradas ANTES de listar os alertas.
+
+Você deve responder ESTRITAMENTE em formato JSON, utilizando a seguinte estrutura:
+
+{
+  "analise_passo_a_passo": "Escreva aqui as palavras erradas encontradas na leitura...",
+  "nivel_risco_geral": "BAIXO",
+  "total_alertas": 2,
+  "alertas": [
+    {
+      "nivel_risco": "Risco Baixo",
+      "categoria": "ERRO ORTOGRÁFICO/GRAMATICAL",
+      "clausula": "Nome ou número da Cláusula",
+      "descricao_risco": "A palavra X foi escrita errada como Y",
+      "recomendacao": "Corrigir para X"
+    }
+  ]
+}
+"""
+
+    async def stream_generator():
+        todos_alertas = []
+        total_lotes = len(lotes)
+        
+        for i, lote_texto in enumerate(lotes):
+            yield json.dumps({
+                "status": "processando",
+                "lote_atual": i + 1,
+                "total_lotes": total_lotes
+            }) + "\n"
+            await asyncio.sleep(0.1)
+            
+            response = await asyncio.to_thread(
+                ollama.chat,
+                model='hermes3:8b',
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": lote_texto}
+                ],
+                format='json',
+                options={"temperature": 0.0}
+            )
+            
+            try:
+                json_resp = json.loads(response['message']['content'])
+                alertas_lote = json_resp.get("alertas", [])
+                if isinstance(alertas_lote, list) and len(alertas_lote) > 0:
+                    todos_alertas.extend(alertas_lote)
+                    
+            except Exception as parse_e:
+                logger.error(f"Erro de JSON no lote {i+1}: {parse_e}")
+                
+            yield json.dumps({
+                "status": "lote_concluido",
+                "lote_atual": i + 1,
+                "total_lotes": total_lotes
+            }) + "\n"
+            await asyncio.sleep(0.05)
+                
+        # Remove duplicatas
+        alertas_unicos = []
+        descricoes_vistas = set()
+        for alerta in todos_alertas:
+            desc = alerta.get("descricao_risco", "").strip().lower()
+            if desc not in descricoes_vistas:
+                descricoes_vistas.add(desc)
+                alertas_unicos.append(alerta)
+                
+        resumo = {
+            "nome_arquivo": arquivo.filename,
+            "nivel_risco_geral": "BAIXO",
+            "total_alertas": len(alertas_unicos),
+            "alertas": alertas_unicos
+        }
+        
+        yield json.dumps({
+            "status": "concluido",
+            "resultado": resumo
+        }) + "\n"
+
+    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
+
+@app.post("/prazos/extrair")
+async def extrair_prazos(arquivo: UploadFile = File(...)):
+    """Recebe uma intimação em PDF e extrai os prazos processuais."""
+    start_time = time.time()
+    
+    # Intimações costumam ser curtas, podemos ler o texto todo de uma vez
+    texto_completo = await extrair_texto_pdf(arquivo)
+
+    if not texto_completo.strip():
+        raise HTTPException(status_code=400, detail="O documento parece estar vazio ou não possui OCR legível.")
+
+    system_prompt = """
+Você é um Analista de Controladoria Jurídica.
+Sua tarefa é ler publicações, intimações ou andamentos processuais e extrair metadados crus.
+
+Regras:
+1. Identifique o NÚMERO DO PROCESSO.
+2. Identifique o TIPO DE ATO JUDICIAL (ex: Apresentar Contestação, Interpor Recurso, Manifestar sobre laudo, etc).
+3. Identifique os DIAS DO PRAZO (ex: 15, 5). Responda apenas com o número inteiro.
+4. Extraia a DATA DE DISPONIBILIZAÇÃO ou DATA DE PUBLICAÇÃO no formato "DD/MM/YYYY". NÃO tente calcular o fim do prazo.
+5. Defina a CRITICIDADE: ALTA (recursos, contestações), MEDIA (manifestações), BAIXA (ciência).
+
+Responda ESTRITAMENTE em JSON seguindo este modelo:
+{
+  "analise_passo_a_passo": "Pense passo a passo...",
+  "alertas": [
+    {
+      "numero_processo": "000000-00.0000.0.00.0000",
+      "tipo_ato_judicial": "Apresentar Contestação",
+      "dias_prazo": 15,
+      "data_publicacao": "15/09/2026",
+      "criticidade": "ALTA"
+    }
+  ]
+}
+"""
+
+    response = await asyncio.to_thread(
+        ollama.chat,
+        model='hermes3:8b',
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": texto_completo}
+        ],
+        format='json',
+        options={"temperature": 0.0}
+    )
+    
+    try:
+        json_resp = json.loads(response['message']['content'])
+        alertas = json_resp.get("alertas", [])
+        
+        # --- Motor Híbrido: Cálculo Python Determinístico ---
+        from datetime import datetime, timedelta
+        
+        for alerta in alertas:
+            dias_prazo = alerta.get("dias_prazo")
+            data_pub_str = alerta.get("data_publicacao")
+            
+            if dias_prazo and data_pub_str:
+                try:
+                    # Início da contagem: O dia seguinte à publicação
+                    data_atual = datetime.strptime(data_pub_str, "%d/%m/%Y")
+                    data_atual += timedelta(days=1)
+                    
+                    dias_adicionados = 0
+                    while dias_adicionados < dias_prazo:
+                        # 5 = Sábado, 6 = Domingo
+                        if data_atual.weekday() < 5:
+                            dias_adicionados += 1
+                        if dias_adicionados < dias_prazo:
+                            data_atual += timedelta(days=1)
+                            
+                    alerta["data_fatal"] = data_atual.strftime("%d/%m/%Y")
+                except ValueError:
+                    alerta["data_fatal"] = "Erro no formato da data"
+            else:
+                alerta["data_fatal"] = "Dados insuficientes para cálculo"
+                
+    except Exception as e:
+        logger.error(f"Erro no parse de prazos: {e}")
+        alertas = []
+
+    return {
+        "status": "concluido",
+        "tempo_processamento": time.time() - start_time,
+        "resultados": alertas
+    }

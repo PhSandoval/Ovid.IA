@@ -12,6 +12,7 @@ menu = st.sidebar.radio(
     "Módulos",
     [
         "Auditoria de Contratos",
+        "Revisão Gramatical",
         "Busca de Jurisprudência",
         "Resumo de Autos",
         "Gestão de Prazos"
@@ -25,44 +26,275 @@ if menu == "Auditoria de Contratos":
     arquivo_upload = st.file_uploader("Arraste seu PDF aqui", type=["pdf"])
     
     if st.button("Analisar Conformidade") and arquivo_upload:
-        with st.spinner("Analisando cláusulas com IA Local..."):
-            try:
-                # Enviar o arquivo via POST form-data
-                files = {"arquivo": (arquivo_upload.name, arquivo_upload.getvalue(), "application/pdf")}
-                response = requests.post(f"{API_URL}/contratos/analisar", files=files)
-                
-                if response.status_code == 200:
-                    dados = response.json()
-                    
-                    st.success(f"Análise concluída! Foram encontrados {dados['total_alertas']} alerta(s).")
-                    st.subheader(f"Nível de Risco Geral: {dados['nivel_risco_geral']}")
-                    
-                    for alerta in dados["alertas"]:
-                        nivel = alerta["nivel_risco"].upper()
-                        # Renderizar cores dependendo da criticidade
-                        if "EXTREMO" in nivel or "CRÍTICO" in nivel:
-                            st.error(f"🚩 **{nivel}** | {alerta['clausula']}")
-                        else:
-                            st.warning(f"⚠️ **{nivel}** | {alerta['clausula']}")
-                            
-                        st.write(f"**Descrição:** {alerta['descricao_risco']}")
-                        st.write(f"**Recomendação:** {alerta['recomendacao']}")
-                        st.markdown("---")
-                else:
+        # Cria os elementos visuais vazios que serão atualizados dinamicamente
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+        resultado_container = st.container()
+
+        try:
+            import time
+            st.session_state.inicio_processamento = time.time()
+            
+            files = {"arquivo": (arquivo_upload.name, arquivo_upload.getvalue(), "application/pdf")}
+            # Habilita o streaming no requests
+            with requests.post(f"{API_URL}/contratos/analisar", files=files, stream=True) as response:
+                if response.status_code != 200:
                     st.error(f"Erro na API: {response.text}")
-            except requests.exceptions.ConnectionError:
-                st.error("Falha de conexão: O Backend (FastAPI) não está rodando. Por favor, inicie o servidor na porta 8000.")
-            except Exception as e:
-                st.error(f"Ocorreu um erro: {str(e)}")
+                else:
+                    # Lê linha por linha conforme o backend envia (Streaming)
+                    for line in response.iter_lines():
+                        if line:
+                            import json
+                            data = json.loads(line)
+                            
+                            if data.get("status") == "processando":
+                                lote = data["lote_atual"]
+                                total = data["total_lotes"]
+                                # O progresso REAL é o que já foi concluído (lote anterior)
+                                lotes_concluidos = lote - 1
+                                percentual = int((lotes_concluidos / total) * 100)
+                                
+                                # Calcula tempo estimado dinamicamente baseado na performance real da máquina
+                                if lotes_concluidos > 0:
+                                    tempo_passado = time.time() - st.session_state.inicio_processamento
+                                    tempo_medio_por_lote = tempo_passado / lotes_concluidos
+                                else:
+                                    tempo_medio_por_lote = 55  # Palpite inicial pessimista para a primeira volta
+                                    
+                                tempo_restante = int((total - lotes_concluidos) * tempo_medio_por_lote)
+                                minutos = tempo_restante // 60
+                                segundos = tempo_restante % 60
+                                
+                                # Anima a UI
+                                progress_text.info(f"⏳ Ovid.IA está lendo o trecho {lote} de {total}... ({percentual}%) | 🕒 Tempo restante: ~{minutos}m {segundos}s (Auditoria Profunda)")
+                                progress_bar.progress(percentual)
+                                
+                            elif data.get("status") == "lote_concluido":
+                                lote = data["lote_atual"]
+                                total = data["total_lotes"]
+                                # Agora sim esse lote foi concluído
+                                lotes_concluidos = lote
+                                percentual = int((lotes_concluidos / total) * 100)
+                                
+                                progress_text.info(f"✅ Lote {lote} analisado! ({percentual}%)")
+                                progress_bar.progress(percentual)
+                                
+                            elif data.get("status") == "concluido":
+                                progress_text.success("🎯 Análise Completa Finalizada!")
+                                progress_bar.progress(100)
+                                
+                                dados = data["resultado"]
+                                
+                                with resultado_container:
+                                    if dados['total_alertas'] > 0:
+                                        st.success(f"Foram encontrados {dados['total_alertas']} alerta(s).")
+                                    else:
+                                        st.success("Nenhum risco de compliance encontrado neste documento.")
+                                        
+                                    st.subheader(f"Nível de Risco Geral: {dados['nivel_risco_geral']}")
+                                    
+                                    for alerta in dados["alertas"]:
+                                        nivel = alerta.get("nivel_risco", "BAIXO").upper()
+                                        categoria = alerta.get("categoria", "RISCO JURÍDICO")
+                                        
+                                        # Formata o título com badge
+                                        titulo_alerta = f"[{categoria}] **{nivel}** | {alerta.get('clausula', 'Sem Cláusula')}"
+                                        
+                                        if "EXTREMO" in nivel or "CRÍTICO" in nivel:
+                                            st.error(f"🚩 {titulo_alerta}")
+                                        elif categoria == "ERRO ORTOGRÁFICO/GRAMATICAL":
+                                            st.info(f"✍️ {titulo_alerta}")
+                                        elif categoria == "AMBIGUIDADE TEXTUAL":
+                                            st.warning(f"🤔 {titulo_alerta}")
+                                        else:
+                                            st.warning(f"⚠️ {titulo_alerta}")
+                                            
+                                        st.write(f"**Descrição:** {alerta.get('descricao_risco', '')}")
+                                        st.write(f"**Recomendação:** {alerta.get('recomendacao', '')}")
+                                        st.markdown("---")
+        except requests.exceptions.ConnectionError:
+            st.error("Falha de conexão: O Backend (FastAPI) não está rodando. Por favor, inicie o servidor na porta 8000.")
+        except Exception as e:
+            st.error(f"Ocorreu um erro inesperado: {str(e)}")
+
+elif menu == "Revisão Gramatical":
+    st.header("✍️ Revisão Gramatical e Ortográfica")
+    st.write("Faça o upload de uma minuta para o Ovid.IA caçar erros de português, digitação e concordância.")
+    
+    arquivo_upload = st.file_uploader("Arraste seu PDF aqui", type=["pdf"], key="gramatica")
+    
+    if st.button("Corrigir Gramática") and arquivo_upload:
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+        resultado_container = st.container()
+
+        try:
+            import time
+            st.session_state.inicio_processamento = time.time()
+            
+            files = {"arquivo": (arquivo_upload.name, arquivo_upload.getvalue(), "application/pdf")}
+            with requests.post(f"{API_URL}/contratos/revisar_gramatica", files=files, stream=True) as response:
+                if response.status_code != 200:
+                    st.error(f"Erro na API: {response.text}")
+                else:
+                    for line in response.iter_lines():
+                        if line:
+                            import json
+                            data = json.loads(line)
+                            
+                            if data.get("status") == "processando":
+                                lote = data["lote_atual"]
+                                total = data["total_lotes"]
+                                lotes_concluidos = lote - 1
+                                percentual = int((lotes_concluidos / total) * 100)
+                                
+                                if lotes_concluidos > 0:
+                                    tempo_passado = time.time() - st.session_state.inicio_processamento
+                                    tempo_medio_por_lote = tempo_passado / lotes_concluidos
+                                else:
+                                    tempo_medio_por_lote = 55
+                                    
+                                tempo_restante = int((total - lotes_concluidos) * tempo_medio_por_lote)
+                                minutos = tempo_restante // 60
+                                segundos = tempo_restante % 60
+                                
+                                progress_text.info(f"⏳ Ovid.IA está lendo o trecho {lote} de {total}... ({percentual}%) | 🕒 Tempo restante: ~{minutos}m {segundos}s (Leitura Densa)")
+                                progress_bar.progress(percentual)
+                                
+                            elif data.get("status") == "lote_concluido":
+                                lote = data["lote_atual"]
+                                total = data["total_lotes"]
+                                percentual = int((lote / total) * 100)
+                                progress_text.info(f"✅ Lote {lote} analisado! ({percentual}%)")
+                                progress_bar.progress(percentual)
+                                
+                            elif data.get("status") == "concluido":
+                                progress_text.success("🎯 Revisão Completa Finalizada!")
+                                progress_bar.progress(100)
+                                
+                                dados = data["resultado"]
+                                
+                                with resultado_container:
+                                    if dados['total_alertas'] > 0:
+                                        st.success(f"Foram encontrados {dados['total_alertas']} erro(s) ortográfico(s).")
+                                    else:
+                                        st.success("Nenhum erro ortográfico ou de concordância encontrado!")
+                                        
+                                    for alerta in dados["alertas"]:
+                                        titulo_alerta = f"[ERRO ORTOGRÁFICO] **BAIXO** | {alerta.get('clausula', 'Sem Cláusula')}"
+                                        st.info(f"✍️ {titulo_alerta}")
+                                        st.write(f"**O que está errado:** {alerta.get('descricao_risco', '')}")
+                                        st.write(f"**Como corrigir:** {alerta.get('recomendacao', '')}")
+                                        st.markdown("---")
+        except requests.exceptions.ConnectionError:
+            st.error("Falha de conexão: O Backend (FastAPI) não está rodando. Por favor, inicie o servidor na porta 8000.")
 
 elif menu == "Busca de Jurisprudência":
     st.header("📚 Busca Semântica de Jurisprudência (RAG)")
-    st.info("Módulo em desenvolvimento. O backend já suporta indexação e busca!")
+    st.write("Crie seu acervo pessoal de jurisprudências e faça buscas inteligentes baseadas no sentido (e não apenas em palavras-chave).")
+    
+    aba_buscar, aba_indexar = st.tabs(["🔍 Buscar Tese", "📥 Alimentar Acervo"])
+    
+    with aba_indexar:
+        st.subheader("Adicionar nova Jurisprudência")
+        texto_ementa = st.text_area("Cole aqui o texto da Ementa ou Acórdão:", height=200)
+        tribunal = st.text_input("Tribunal (Ex: TJSP, STJ, TST):")
+        
+        if st.button("Indexar no Banco Vetorial"):
+            if texto_ementa and tribunal:
+                with st.spinner("Vetorizando o texto no ChromaDB..."):
+                    payload = {
+                        "texto": texto_ementa,
+                        "metadados": {"tribunal": tribunal}
+                    }
+                    resp = requests.post(f"{API_URL}/jurisprudencia/indexar", json=payload)
+                    if resp.status_code == 200:
+                        st.success("✅ Ementa salva e vetorizada com sucesso!")
+                    else:
+                        st.error("Falha ao salvar no banco.")
+            else:
+                st.warning("Preencha o texto e o tribunal.")
+                
+    with aba_buscar:
+        st.subheader("Consultar o Acervo")
+        query_busca = st.text_input("Qual é a sua tese jurídica ou dúvida?")
+        
+        fonte_busca = st.radio("Selecione a base de dados:", ["🔒 Acervo Local (ChromaDB)", "☁️ API Externa (Jusbrasil)"])
+        
+        if st.button("Pesquisar com IA"):
+            if query_busca:
+                with st.spinner("O Hermes está pesquisando as ementas e redigindo a resposta..."):
+                    payload = {"query": query_busca}
+                    
+                    if "Externa" in fonte_busca:
+                        endpoint = f"{API_URL}/jurisprudencia/buscar_externo"
+                    else:
+                        endpoint = f"{API_URL}/jurisprudencia/buscar"
+                        
+                    resp = requests.post(endpoint, json=payload)
+                    
+                    if resp.status_code == 200:
+                        resultado = resp.json()
+                        st.markdown("### 🤖 Parecer da IA")
+                        st.info(resultado.get("resposta_ia", "Sem resposta."))
+                        
+                        st.markdown(f"### 📄 Precedentes Utilizados ({'Jusbrasil' if 'Externa' in fonte_busca else 'Acervo Interno'})")
+                        for i, fonte in enumerate(resultado.get("fontes", [])):
+                            trib = fonte.get('metadados', {}).get('tribunal', 'N/A')
+                            
+                            if "Externa" in fonte_busca:
+                                titulo = fonte.get('metadados', {}).get('titulo', 'Link')
+                                link = fonte.get('metadados', {}).get('link', '#')
+                                st.write(f"**Fonte {i+1} - [{titulo}]({link})**")
+                            else:
+                                st.write(f"**Fonte {i+1} ({trib}) - Score L2: {fonte.get('score', 0):.4f}**")
+                                
+                            st.write(f"> {fonte.get('texto_recuperado', '')}")
+                            st.markdown("---")
+                    else:
+                        st.error(f"Erro na busca: {resp.text}")
 
 elif menu == "Resumo de Autos":
     st.header("📑 Intake: Resumo de Autos Processuais")
     st.info("Módulo em desenvolvimento. O endpoint /autos/resumir já está ativo no backend!")
 
 elif menu == "Gestão de Prazos":
-    st.header("📅 Gestão de Prazos e Diário Oficial")
-    st.info("Módulo em desenvolvimento. O motor de cálculo do CPC já foi integrado!")
+    st.header("📅 Extração de Prazos Processuais")
+    st.write("Faça o upload de uma intimação judicial (PDF) para extrair metadados para a sua agenda.")
+    
+    arquivo_upload = st.file_uploader("Arraste a Intimação/Publicação (PDF)", type=["pdf"], key="prazos")
+    
+    if st.button("Extrair Prazos") and arquivo_upload:
+        with st.spinner("⏳ Lendo a intimação e calculando regras do CPC..."):
+            try:
+                files = {"arquivo": (arquivo_upload.name, arquivo_upload.getvalue(), "application/pdf")}
+                response = requests.post(f"{API_URL}/prazos/extrair", files=files)
+                
+                if response.status_code == 200:
+                    dados = response.json()
+                    alertas = dados.get("resultados", [])
+                    
+                    st.success(f"🎯 Extração Concluída em {dados.get('tempo_processamento', 0):.1f} segundos!")
+                    
+                    if not alertas:
+                        st.info("Nenhum prazo claro foi encontrado neste documento.")
+                        
+                    for alerta in alertas:
+                        criticidade = alerta.get('criticidade', 'MEDIA').upper()
+                        
+                        if criticidade == "ALTA":
+                            cor = "🔴"
+                        elif criticidade == "MEDIA":
+                            cor = "🟡"
+                        else:
+                            cor = "🟢"
+                            
+                        st.subheader(f"{cor} {alerta.get('tipo_ato_judicial', 'Ato Indefinido')}")
+                        st.write(f"**Número do Processo:** {alerta.get('numero_processo', 'Não encontrado')}")
+                        st.write(f"**Dias de Prazo:** {alerta.get('dias_prazo', 'N/A')} dias úteis")
+                        st.write(f"**Data Fatal Estimada:** {alerta.get('data_fatal', 'Não calculado')}")
+                        st.markdown("---")
+                else:
+                    st.error(f"Erro na API: {response.text}")
+            except requests.exceptions.ConnectionError:
+                st.error("Falha de conexão com o Backend.")
