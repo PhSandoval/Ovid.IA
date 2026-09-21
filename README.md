@@ -13,7 +13,7 @@ Responsável pela interface com o advogado.
 
 ### 2. Backend (FastAPI + Ollama)
 O motor central do sistema.
-- **Local:** `ovid_ia_backend/`
+- **Local:** `backend/`
 - **Componentes:**
   - `app/main.py`: O roteador (API Gateway). Gerencia os endpoints, orquestra os serviços e garante validação via Pydantic.
   - `app/schemas.py`: Modelos de dados. Garantem que a IA não retorne textos soltos, forçando saídas em JSON estruturado (ex: `ResumoAuditoria`, `ResumoAutos`).
@@ -55,19 +55,19 @@ O **Módulo de Prazos Processuais** introduz o conceito de **Cérebro Híbrido**
 ## ⚙️ Como Executar
 
 ### 1. Requisitos
-- Python 3.12 (Recomendado)
+- Python 3.12 ou superior
 - Ollama instalado e rodando com o modelo `hermes3:8b`.
 
-### 2. Rodando o Backend
+### 2. Rodando o Backend (FastAPI)
 ```bash
-cd ovid_ia_backend
+cd backend
 source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Rodando o Frontend
-Em um **novo terminal**:
+### 3. Rodando o Frontend (Streamlit)
+Em um **novo terminal** na raiz do projeto:
 ```bash
-source ovid_ia_backend/.venv/bin/activate
+source backend/.venv/bin/activate
 streamlit run frontend/app.py
 ```

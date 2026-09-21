@@ -1,9 +1,14 @@
 import chromadb
 import uuid
+import os
 from app.services.embeddings import gerar_embedding
 
+# Define o caminho absoluto para a pasta chroma_data na raiz do projeto (Ovid.IA/chroma_data)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+CHROMA_PATH = os.path.join(BASE_DIR, "chroma_data")
+
 # Inicializa o cliente local do ChromaDB salvando os dados na pasta raiz
-chroma_client = chromadb.PersistentClient(path="./chroma_data")
+chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 
 # Cria ou obtém a coleção (tabela vetorial) de jurisprudência
 collection = chroma_client.get_or_create_collection(name="jurisprudencia")
