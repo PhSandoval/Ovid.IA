@@ -227,7 +227,7 @@ elif menu == "Busca de Jurisprudência":
         st.subheader("Consultar o Acervo")
         query_busca = st.text_input("Qual é a sua tese jurídica ou dúvida?")
         
-        fonte_busca = st.radio("Selecione a base de dados:", ["🔒 Acervo Local (ChromaDB)", "☁️ API Externa (Jusbrasil)"])
+        fonte_busca = st.radio("Selecione a base de dados:", ["🔒 Acervo Local (ChromaDB)", "☁️ API Externa (Escavador)"])
         
         if st.button("Pesquisar com IA"):
             if query_busca:
@@ -242,7 +242,7 @@ elif menu == "Busca de Jurisprudência":
                             st.markdown("### 🤖 Parecer da IA")
                             st.info(resultado.get("resposta_ia", "Sem resposta."))
                             
-                            st.markdown("### 📄 Precedentes Utilizados (Jusbrasil)")
+                            st.markdown("### 📄 Precedentes Utilizados (Escavador)")
                             for i, fonte in enumerate(resultado.get("fontes", [])):
                                 titulo = fonte.get('metadados', {}).get('titulo', 'Link')
                                 link = fonte.get('metadados', {}).get('link', '#')
