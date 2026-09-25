@@ -4,117 +4,56 @@ Abaixo está o diagrama completo de como os componentes do Ovid.IA estão interl
 
 ```mermaid
 graph TD
-    %% Cores e Estilos
+    %% Estilos
     classDef frontend fill:#4CAF50,stroke:#388E3C,stroke-width:2px,color:white;
     classDef backend fill:#2196F3,stroke:#1976D2,stroke-width:2px,color:white;
     classDef ia fill:#9C27B0,stroke:#7B1FA2,stroke-width:2px,color:white;
     classDef db fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:white;
-    classDef external fill:#607D8B,stroke:#455A64,stroke-width:2px,color:white;
+    classDef cloud fill:#0078D4,stroke:#005A9E,stroke-width:2px,color:white;
 
-    %% Atores
-    User((Advogado))
+    Advogado((Usuário))
 
-    %% Frontend
-    subgraph FRONTEND ["Interface do Usuário (Streamlit)"]
-        UI_Auditoria[Auditoria de Contratos]
-        UI_Prazos[Gestão de Prazos]
-        UI_RAG[Busca de Jurisprudência]
-        UI_Intake[Resumo de Autos]
-        UI_Padronizacao[Módulo de Padronização de Peças]
+    subgraph "Camada de Apresentação"
+        UI[Streamlit UI]
     end
 
-    %% Backend
-    subgraph BACKEND ["API Gateway (FastAPI)"]
-        Router_Auditoria[/contratos/analisar/]
-        Router_Prazos[/prazos/extrair/]
-        Router_RAG[/jurisprudencia/buscar/]
-        Router_Intake[/autos/resumir/]
-        Router_Padronizacao[/pecas/gerar/]
-        
-        Parser[Motor OCR / PDFPlumber]
-        Calculadora[Motor Determinístico - Datas]
+    subgraph "Camada Lógica (Stateless)"
+        API[FastAPI Gateway]
+        ETL_Memory[Parser em Memória - BytesIO]
+        QA_CircuitBreaker[QA LLM-as-a-Judge]
     end
 
-    %% Motores de IA (100% Locais)
-    subgraph AI_MOTORES ["Motores Locais (Air-Gap)"]
-        Ollama_Hermes[Ollama - Hermes 3 8B]
-        Ollama_Qwen[Ollama - Qwen 2.5 3B]
-        LangTool[LanguageTool - Gramática]
-        Embeddings[Sentence-Transformers - all-MiniLM]
+    subgraph "Camada de Persistência Híbrida"
+        PG[(PostgreSQL + pgvector)]
+    end
+    
+    subgraph "M365 Corporativo"
+        GraphAPI[Microsoft Graph API]:::cloud
+        OneDrive[(OneDrive Cloud)]:::cloud
     end
 
-    %% Bancos de Dados
-    subgraph DATABASE ["Persistência de Dados"]
-        ChromaDB[(ChromaDB - Banco Vetorial)]
+    subgraph "IA Local (Air-Gap)"
+        Ollama[Ollama - Embeddings & Inference]
     end
 
-    %% ETL Externo
-    subgraph ETL ["Pipeline ETL (Segurança Anti-Apagão)"]
-        ETL_Jurisprudencia["etl_jurisprudencia.py (HF)"]
-        ETL_Acervo["ETL Acervo Interno (Scripts 01 e 02)"]
-        Parquet_Fallback[(Backup Local .parquet)]
-    end
+    Advogado -->|Busca Peça Padrão| UI
+    UI -->|POST /pecas| API
+    
+    API -->|1. Busca SQL/Vetor| PG
+    PG -.->|Retorna item_id| API
+    
+    API -->|2. MSAL Auth| GraphAPI
+    GraphAPI -->|3. Download File Stream| OneDrive
+    OneDrive -.->|4. PDF In-Memory| ETL_Memory
+    
+    ETL_Memory -->|5. Padrão Ouro Completo| Ollama
+    Ollama -.->|6. Peça Clonada/Rascunho| QA_CircuitBreaker
+    
+    QA_CircuitBreaker <-->|7. Loop de Autocorreção (Max 3x)| Ollama
+    QA_CircuitBreaker -.->|8. Peça Validada| UI
 
-    %% Fontes Externas
-    HF[(Hugging Face - Repojus)]:::external
-    AcervoLocal[(Arquivos Locais - Acervo_Clientes)]:::external
-
-    %% Conexões do Usuário
-    User -->|PDF Contrato| UI_Auditoria
-    User -->|PDF Intimação| UI_Prazos
-    User -->|Tese Jurídica| UI_RAG
-    User -->|PDF Inicial| UI_Intake
-    User -->|Pedido de Peça| UI_Padronizacao
-
-    %% Conexões Frontend -> Backend
-    UI_Auditoria -->|"POST (Stream)"| Router_Auditoria
-    UI_Prazos -->|POST| Router_Prazos
-    UI_RAG -->|"POST (Stream)"| Router_RAG
-    UI_Intake -->|POST| Router_Intake
-    UI_Padronizacao -->|"POST (Agentic Loop)"| Router_Padronizacao
-
-    %% Conexões Intake (Novo)
-    Router_Intake -->|Lê PDF Inteiro| Parser
-    Parser -->|Contexto Bruto| Ollama_Hermes
-    Ollama_Hermes -.->|JSON Estruturado| UI_Intake
-
-    %% Conexões Padronização (Agentic Workflow)
-    Router_Padronizacao -->|Filtro Metadado| ChromaDB
-    ChromaDB -.->|Molde Padrão Ouro| Router_Padronizacao
-    Router_Padronizacao <-->|Loop Circuit Breaker| Ollama_Hermes
-    Ollama_Hermes -.->|DOCX Final| UI_Padronizacao
-
-    %% Conexões Auditoria
-    Router_Auditoria -->|Lotes/Overlap| Parser
-    Parser -->|Contexto Loteado| Ollama_Hermes
-    Parser -->|Verifica Ortografia| LangTool
-
-    %% Conexões Prazos
-    Router_Prazos -->|Pede Metadados| Ollama_Hermes
-    Ollama_Hermes -.->|Prazo Bruto| Router_Prazos
-    Router_Prazos -->|Injeta no Algoritmo| Calculadora
-    Calculadora -.->|"Data Fatal (Pula FDS)"| UI_Prazos
-
-    %% Conexões ETL e RAG
-    HF -->|Download API Oficial| ETL_Jurisprudencia
-    AcervoLocal -->|Extração PDF/DOCX| ETL_Acervo
-    ETL_Jurisprudencia -->|Falha na Rede| Parquet_Fallback
-    ETL_Jurisprudencia -->|Ementas| Embeddings
-    ETL_Acervo -->|"Textos + Metadados Ricos (GPU MPS)"| Embeddings
-    Embeddings -->|Vetores 384d| ChromaDB
-
-    Router_RAG -->|1. Converte Pergunta| Embeddings
-    Embeddings -.->|Vetor da Pergunta| Router_RAG
-    Router_RAG -->|2. Busca Semântica| ChromaDB
-    ChromaDB -.->|Top 3 Ementas| Router_RAG
-    Router_RAG -->|3. Injeta Contexto| Ollama_Qwen
-    Ollama_Qwen -.->|Parecer em Streaming| UI_RAG
-
-    %% Aplicação de Estilos
-    class UI_Auditoria,UI_Prazos,UI_RAG,UI_Intake,UI_Padronizacao frontend;
-    class Router_Auditoria,Router_Prazos,Router_RAG,Router_Intake,Router_Padronizacao,Parser,Calculadora backend;
-    class Ollama_Hermes,Ollama_Qwen,LangTool,Embeddings ia;
-    class ChromaDB,Parquet_Fallback db;
-    class ETL_Jurisprudencia,ETL_Acervo backend;
-
+    class UI frontend;
+    class API,ETL_Memory,QA_CircuitBreaker backend;
+    class Ollama ia;
+    class PG db;
 ```
