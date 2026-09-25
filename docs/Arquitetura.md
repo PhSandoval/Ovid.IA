@@ -111,10 +111,10 @@ graph TD
     Ollama_Qwen -.->|Parecer em Streaming| UI_RAG
 
     %% Aplicação de Estilos
-    UI_Auditoria,UI_Prazos,UI_RAG,UI_Intake class frontend;
-    Router_Auditoria,Router_Prazos,Router_RAG,Router_Intake,Parser,Calculadora class backend;
-    Ollama_Hermes,Ollama_Qwen,LangTool,Embeddings class ia;
-    ChromaDB,Parquet_Fallback class db;
-    ETL_Jurisprudencia,ETL_Acervo class backend;
+    class UI_Auditoria,UI_Prazos,UI_RAG,UI_Intake,UI_Padronizacao frontend;
+    class Router_Auditoria,Router_Prazos,Router_RAG,Router_Intake,Router_Padronizacao,Parser,Calculadora backend;
+    class Ollama_Hermes,Ollama_Qwen,LangTool,Embeddings ia;
+    class ChromaDB,Parquet_Fallback db;
+    class ETL_Jurisprudencia,ETL_Acervo backend;
 
 ```
