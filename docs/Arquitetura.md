@@ -67,11 +67,11 @@ graph TD
     User -->|Pedido de Peça| UI_Padronizacao
 
     %% Conexões Frontend -> Backend
-    UI_Auditoria -->|POST (Stream)| Router_Auditoria
+    UI_Auditoria -->|"POST (Stream)"| Router_Auditoria
     UI_Prazos -->|POST| Router_Prazos
-    UI_RAG -->|POST (Stream)| Router_RAG
+    UI_RAG -->|"POST (Stream)"| Router_RAG
     UI_Intake -->|POST| Router_Intake
-    UI_Padronizacao -->|POST (Agentic Loop)| Router_Padronizacao
+    UI_Padronizacao -->|"POST (Agentic Loop)"| Router_Padronizacao
 
     %% Conexões Intake (Novo)
     Router_Intake -->|Lê PDF Inteiro| Parser
@@ -93,14 +93,14 @@ graph TD
     Router_Prazos -->|Pede Metadados| Ollama_Hermes
     Ollama_Hermes -.->|Prazo Bruto| Router_Prazos
     Router_Prazos -->|Injeta no Algoritmo| Calculadora
-    Calculadora -.->|Data Fatal (Pula FDS)| UI_Prazos
+    Calculadora -.->|"Data Fatal (Pula FDS)"| UI_Prazos
 
     %% Conexões ETL e RAG
     HF -->|Download API Oficial| ETL_Jurisprudencia
     AcervoLocal -->|Extração PDF/DOCX| ETL_Acervo
     ETL_Jurisprudencia -->|Falha na Rede| Parquet_Fallback
     ETL_Jurisprudencia -->|Ementas| Embeddings
-    ETL_Acervo -->|Textos + Metadados Ricos (GPU MPS)| Embeddings
+    ETL_Acervo -->|"Textos + Metadados Ricos (GPU MPS)"| Embeddings
     Embeddings -->|Vetores 384d| ChromaDB
 
     Router_RAG -->|1. Converte Pergunta| Embeddings
