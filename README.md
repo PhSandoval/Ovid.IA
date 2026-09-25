@@ -69,7 +69,7 @@ graph TD
     ETL_Memory -->|5. Padrão Ouro Completo| Ollama
     Ollama -.->|6. Peça Clonada/Rascunho| QA_CircuitBreaker
     
-    QA_CircuitBreaker <-->|7. Loop de Autocorreção (Max 3x)| Ollama
+    QA_CircuitBreaker <-->|"7. Loop de Autocorreção (Max 3x)"| Ollama
     QA_CircuitBreaker -.->|8. Peça Validada| UI
 
     class UI frontend;
