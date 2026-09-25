@@ -406,7 +406,7 @@ elif menu == "Gestão de Prazos":
                         st.info("Nenhum prazo claro foi encontrado neste documento.")
                         
                     for alerta in alertas:
-                        criticidade = alerta.get('criticidade', 'MEDIA').upper()
+                        criticidade = (alerta.get('criticidade') or 'MEDIA').upper()
                         
                         if criticidade == "ALTA":
                             cor = "🔴"

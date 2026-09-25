@@ -16,3 +16,7 @@ chroma_data/
 # Streamlit e FastAPI caches
 .pytest_cache/
 .streamlit/
+
+# Acervo Físico de Clientes (LGPD)
+Acervo_Clientes/
+data/inventario_*.csv

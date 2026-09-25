@@ -3,8 +3,8 @@ import uuid
 import os
 from app.services.embeddings import gerar_embedding
 
-# Define o caminho absoluto para a pasta chroma_data na raiz do projeto (Ovid.IA/chroma_data)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# Define o caminho absoluto para a pasta chroma_data dentro de backend/
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CHROMA_PATH = os.path.join(BASE_DIR, "chroma_data")
 
 # Inicializa o cliente local do ChromaDB salvando os dados na pasta raiz
