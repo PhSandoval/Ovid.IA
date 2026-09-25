@@ -1,82 +1,172 @@
-# Ovid.IA - Copiloto Jurídico 100% Local ⚖️🤖
+# Ovid.IA - Copiloto Jurídico Air-Gap (Enterprise Edition) ⚖️🤖
 
-Ovid.IA é um assistente jurídico (LegalTech) focado em privacidade estrita de dados (LGPD). Toda a inferência de IA e processamento de documentos ocorre **localmente**, sem o uso de APIs na nuvem.
+O Ovid.IA é um assistente jurídico (LegalTech) focado em **Sigilo Absoluto e Privacidade de Dados (LGPD)**. Através de uma arquitetura estrita de *Air-Gap Inference*, o sistema opera modelos fundacionais (LLMs) totalmente locais (sem nuvem pública), garantindo que dados corporativos, contratos e peças processuais sensíveis jamais sejam enviados a provedores terceiros como OpenAI, Anthropic ou Google.
 
-## 🏗️ Arquitetura do Sistema
+O sistema integra-se nativamente ao ecossistema Microsoft 365, extraindo o acervo do escritório diretamente do **OneDrive Corporativo** para a Memória RAM, preservando o modelo operacional da firma sem comprometer a segurança.
 
-O projeto adota uma arquitetura em duas camadas (Frontend e Backend) fracamente acopladas, comunicando-se via REST.
+---
 
-### 1. Frontend (Streamlit)
-Responsável pela interface com o advogado.
-- **Local:** `frontend/app.py`
-- **Função:** Captura inputs (upload de PDFs, textos), faz chamadas HTTP para o backend local e renderiza os JSONs de resposta em painéis amigáveis.
+## 🏛️ Visão Arquitetural
 
-### 2. Backend (FastAPI + Ollama)
-O motor central do sistema.
-- **Local:** `backend/`
-- **Componentes:**
-  - `app/main.py`: O roteador (API Gateway). Gerencia os endpoints, orquestra os serviços e garante validação via Pydantic.
-  - `app/schemas.py`: Modelos de dados. Garantem que a IA não retorne textos soltos, forçando saídas em JSON estruturado (ex: `ResumoAuditoria`, `ResumoAutos`).
-  - `app/services/parser.py`: Motor OCR e leitura de textos de PDFs usando `pdfplumber`.
-  - `app/services/vector_db.py`: Banco de dados vetorial (`ChromaDB`). Transforma jurisprudência em matemática para busca por similaridade semântica.
-  - `app/services/prazos.py`: Motor lógico-matemático. Pega a quantidade de dias lida pela IA e faz a contagem de dias úteis segundo o CPC, devolvendo a data fatal sem alucinações.
-  - **Ollama**: Roda em background, fornecendo o LLM (`hermes3:8b`) que atua como o "cérebro" para estruturar informações.
+A infraestrutura é modular e conteinerizada (stateless), desenhada para rodar desde o *bare-metal* do escritório até instâncias isoladas em VPC na AWS.
 
-## 🚀 Módulos (Sprints)
+### Tech Stack
+- **Orquestração:** Docker Compose.
+- **Armazenamento de Ficheiros:** Microsoft OneDrive via Graph API (`msal`). Zero persistência local (ETL In-Memory).
+- **Banco de Dados (Vetor e Relacional):** PostgreSQL 16 com extensão `pgvector`.
+- **Backend (API Gateway):** FastAPI (Python).
+- **Frontend (Interface do Advogado):** Streamlit.
+- **Motor de IA (Air-Gap):** Ollama executando localmente modelos LLM (*Hermes 3*, *Qwen 2.5*) e de *Embeddings*.
 
-### 1. Auditoria de Contratos (`/contratos/analisar`)
-O **Módulo 1** é projetado para atuar como um "Classificador de Risco" automatizado para minutas e contratos recebidos pelo escritório.
-- **Como funciona:** O advogado faz o upload de um PDF no frontend (Streamlit). O FastAPI recebe o documento e usa a biblioteca `pdfplumber` para realizar um "extrator a frio" (lendo apenas a camada de texto, ignorando imagens maliciosas). Esse texto é então encapsulado em um *Prompt de Sistema* extremamente restrito (`temperature=0.0`) e enviado ao motor local Ollama (`hermes3:8b`). A IA tem permissão **apenas** para identificar cláusulas abusivas e devolver um JSON estrito (tipado via Pydantic).
-- **🔒 Segurança e Conformidade (LGPD):** 
-  Neste módulo (e em todo o sistema Ovid.IA), a segurança da informação é o pilar central. Contratos jurídicos possuem dados hipersensíveis (valores financeiros, nomes de partes, CNPJs). O diferencial do Ovid.IA é o isolamento em *Air-Gap Lógico*:
-  - **Zero Nuvem:** Absolutamente NENHUM dado (PDF, texto ou metadado) é enviado para APIs externas como OpenAI, Google ou Anthropic. Toda a inferência de IA ocorre usando a placa gráfica (ou processador) da própria máquina onde o servidor está rodando, garantindo 100% de sigilo sob as diretrizes da LGPD e Estatuto da Advocacia.
-  - **Prevenção de Alucinação:** Ao forçar o formato JSON e setar a "criatividade" da IA para zero, impedimos que o sistema invente riscos ou vaze dados de contratos de outros clientes nos resultados gerados.
+---
 
-### 2. Busca de Jurisprudência e RAG (`/jurisprudencia/buscar`)
-Motor de Geração Aumentada por Recuperação (RAG) para teses jurídicas. O sistema opera em duas vias de arquitetura:
-- **🔒 Acervo Local (ChromaDB):** O advogado pode colar ementas no frontend, que são vetorizadas via `Sentence-Transformers` (`all-MiniLM-L6-v2`) e armazenadas localmente no banco ChromaDB. Buscas subsequentes calculam a distância semântica e injetam as ementas no contexto do LLM.
-- **☁️ RAG Invertido (API Externa - Escavador):** Endpoint `/jurisprudencia/buscar_externo` integrado com a API Oficial do Escavador para consumir precedentes atualizados da nuvem.
-  - **⚠️ Decisão de Arquitetura (Web Scraping banido):** O Ovid.IA não utiliza bibliotecas amadoras de raspagem web (ex: `duckduckgo-search`). Buscadores genéricos retornam "Snippets" mutilados que causam alucinação grave.
-  - **Solução Corporativa:** A rota externa utiliza as Chaves de API do **Escavador** para puxar dados em formato JSON estruturado, servindo de base sólida para a geração da IA.
+## 🏗️ Diagrama de Arquitetura (Mermaid)
 
-### 3. Resumo de Autos (`/autos/resumir`)
-Faz o "Intake" de novos casos. Processa petições iniciais ou autos extensos e extrai instantaneamente as partes (autor/réu), o valor da causa, pedidos formulados, pedidos de tutela e produz um resumo dos fatos.
-- **Exportação Corporativa (.DOCX):** Uma das funcionalidades de maior valor para o escritório! Após a análise do "Intake", o sistema permite a exportação do resultado com um único clique para um documento Word (`.docx`) já pré-formatado. Isso elimina o copia-e-cola e acelera o fluxo de peticionamento e elaboração de pareceres internos.
+```mermaid
+graph TD
+    %% Estilos
+    classDef frontend fill:#4CAF50,stroke:#388E3C,stroke-width:2px,color:white;
+    classDef backend fill:#2196F3,stroke:#1976D2,stroke-width:2px,color:white;
+    classDef ia fill:#9C27B0,stroke:#7B1FA2,stroke-width:2px,color:white;
+    classDef db fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:white;
+    classDef cloud fill:#0078D4,stroke:#005A9E,stroke-width:2px,color:white;
 
-### 4. Revisão Gramatical (`/contratos/revisar_gramatica`)
-O **Módulo Fantasma** agora oficializado! Focado exclusivamente no refino ortográfico e coesão textual de peças jurídicas.
-- **Como funciona:** Analisa contratos e petições varrendo por erros gramaticais, sugerindo correções fundamentadas nas regras da língua portuguesa e avaliando a clareza e o tom do documento. Essencial para o polimento final antes do protocolo.
+    Advogado((Usuário))
 
-### 5. Gestão de Prazos (`/prazos/extrair`)
-O **Módulo de Prazos Processuais** introduz o conceito de **Cérebro Híbrido** no Ovid.IA (IA Generativa + Algoritmo Determinístico).
-- **O Problema da IA com Datas:** LLMs não têm a capacidade de contar dias úteis num calendário, identificar feriados ou pular finais de semana, sofrendo de altíssimas taxas de "alucinação" matemática.
-- **A Solução (Cérebro Híbrido):** 
-  - **1º Passo (NER - Inteligência):** A IA atua **exclusivamente** como uma Extratora de Entidades (NER). Ela lê a intimação e "pesca" a Data de Publicação e o Prazo Bruto (ex: `15`).
-  - **2º Passo (Motor Determinístico):** O código Python (backend) toma a frente, utilizando a biblioteca nativa `datetime`. Ele adiciona 1 dia ao prazo de início e itera num laço `while`, avançando o relógio temporal e pulando matematicamente os Sábados e Domingos até alcançar os `15` dias exigidos.
+    subgraph "Camada de Apresentação"
+        UI[Streamlit UI]
+    end
 
+    subgraph "Camada Lógica (Stateless)"
+        API[FastAPI Gateway]
+        ETL_Memory[Parser em Memória - BytesIO]
+        QA_CircuitBreaker[QA LLM-as-a-Judge]
+    end
 
-### 6. Módulo de Padronização de Peças (Em Desenvolvimento - Agentic Workflow)
-Este será o módulo mais avançado do sistema. Ele permite que o LLM redija peças inteiras (Contratos, Distratos, Iniciais) usando a própria base de dados do escritório como "Padrão Ouro".
-- **ETL Interno (Acervo):** Scripts de ingestão (`etl/01_gerar_inventario_acervo.py` e `etl/02_injetar_acervo_banco_vetorial.py`) vasculham os diretórios internos do escritório e extraem metadados profundos (Categoria, Tipo de Documento, Ano e Status Padrão Ouro).
-- **Aceleração Apple Silicon:** O pipeline de ingestão utiliza processamento matricial em GPU (MPS - Metal Performance Shaders) para vetorizar milhares de documentos em segundos.
-- **Agentic Workflow (Circuit Breaker):** Quando um advogado pede uma peça, o sistema filtra rigorosamente o ChromaDB para puxar o molde correto. O texto gerado pelo LLM é então testado por um *LLM-as-a-Judge*. Se a peça não estiver perfeita, ela volta para o gerador corrigir (com limite de 3 tentativas para evitar loop infinito).
+    subgraph "Camada de Persistência Híbrida"
+        PG[(PostgreSQL + pgvector)]
+    end
+    
+    subgraph "M365 Corporativo"
+        GraphAPI[Microsoft Graph API]:::cloud
+        OneDrive[(OneDrive Cloud)]:::cloud
+    end
 
-## ⚙️ Como Executar
+    subgraph "IA Local (Air-Gap)"
+        Ollama[Ollama - Embeddings & Inference]
+    end
 
-### 1. Requisitos
-- Python 3.12 ou superior
-- Ollama instalado e rodando com o modelo `hermes3:8b`.
+    Advogado -->|Busca Peça Padrão| UI
+    UI -->|POST /pecas| API
+    
+    API -->|1. Busca SQL/Vetor| PG
+    PG -.->|Retorna item_id| API
+    
+    API -->|2. MSAL Auth| GraphAPI
+    GraphAPI -->|3. Download File Stream| OneDrive
+    OneDrive -.->|4. PDF In-Memory| ETL_Memory
+    
+    ETL_Memory -->|5. Padrão Ouro Completo| Ollama
+    Ollama -.->|6. Peça Clonada/Rascunho| QA_CircuitBreaker
+    
+    QA_CircuitBreaker <-->|7. Loop de Autocorreção (Max 3x)| Ollama
+    QA_CircuitBreaker -.->|8. Peça Validada| UI
 
-### 2. Rodando o Backend (FastAPI)
+    class UI frontend;
+    class API,ETL_Memory,QA_CircuitBreaker backend;
+    class Ollama ia;
+    class PG db;
+```
+
+---
+
+## 🧠 Fluxos de Engenharia Críticos
+
+### 1. Ingestão e Vetorização Segura (In-Memory ETL)
+Para garantir conformidade extrema, o Ovid.IA não salva documentos físicos (PDFs, DOCXs) no disco local. 
+O backend conecta-se à Graph API, faz o download do arquivo diretamente para um `io.BytesIO` na Memória RAM. O texto é extraído, fatiado e vetorizado pelo modelo local. Em seguida, os *Embeddings* e *Metadados* (incluindo o `onedrive_item_id`) são gravados no PostgreSQL, e o arquivo PDF é apagado da RAM pelo *Garbage Collector*.
+
+### 2. Módulo de Padronização (RAG Small-to-Big)
+Ao buscar jurisprudência interna ou pedir a redação de uma peça:
+1. **Recuperação Categórica (Small):** O sistema executa uma Query Híbrida no `pgvector`, filtrando pelos metadados relacionais (Ex: `Categoria = Societário`) associado ao cálculo de Distância Euclidiana L2 dos vetores.
+2. **Injeção de Padrão Ouro (Big):** Após encontrar o vetor mais semelhante, o Ovid.IA **não** envia apenas aquele pequeno fragmento ao LLM. Usando o `item_id`, ele faz o download do documento na íntegra no OneDrive e o joga no Contexto do LLM para guiar o clone estrutural.
+
+### 3. Disjuntor de Qualidade (Quality Assurance Circuit Breaker)
+Todo rascunho de peça gerado pelo LLM passa por um *Pipeline Determinístico e Semântico*:
+- **Validações Hard:** Regex valida formatos de CNPJ, Datas, e Máscaras de Processo.
+- **Semântica (LLM-as-a-Judge):** Um segundo agente de IA analisa se o texto cumpre as exigências.
+Se o LLM alucinar, o sistema engatilha um loop de autocorreção invisível ao usuário final, possuindo uma "trava" (circuit breaker) de 3 tentativas máximas para evitar gargalo computacional.
+
+---
+
+## 📁 Estrutura de Diretórios (Monorepo)
+
+```text
+ovid_ia/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                 # FastAPI Router & Gateway
+│   │   ├── services/
+│   │   │   ├── onedrive_service.py # Autenticação MSAL e in-memory file handling
+│   │   │   ├── parser.py           # Processamento OCR/Texto (BytesIO)
+│   │   │   └── vector_db.py        # Conexão psycopg2 com PGVector
+├── frontend/
+│   └── app.py                      # UI em Streamlit
+├── docker-compose.yml              # Orquestração local do PGVector
+└── .env                            # Credenciais Secretas (Ignorado no Git)
+```
+
+---
+
+## 🚀 Guia de Instalação e Execução
+
+### 1. Pré-Requisitos
+- **Docker** instalado.
+- **Python 3.12+**.
+- **Ollama** rodando localmente com os modelos `hermes3:8b` (ou similar) instalados.
+- Registro de Aplicação no **Entra ID (Azure)** com API Permissions do tipo *Application* em `Files.Read.All`.
+
+### 2. Configurando as Variáveis de Ambiente
+Crie um arquivo `.env` na raiz do projeto contendo as seguintes chaves de acesso:
+
+```env
+# Banco de Dados
+POSTGRES_USER=ovidia_user
+POSTGRES_PASSWORD=ovidia_password
+POSTGRES_DB=ovidia_db
+
+# Integração Microsoft 365 (Graph API - Client Credentials)
+ONEDRIVE_TENANT_ID=seu-tenant-id
+ONEDRIVE_CLIENT_ID=seu-client-id
+ONEDRIVE_CLIENT_SECRET=seu-client-secret
+```
+
+### 3. Subindo o Banco de Dados
+Na raiz do projeto, instancie o PostgreSQL com extensão `pgvector`:
+```bash
+docker-compose up -d
+```
+
+### 4. Inicializando os Serviços (Locais)
+Com os ambientes virtuais em Python configurados, inicie o ecossistema:
+
+**Terminal 1 (Backend):**
 ```bash
 cd backend
 source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Rodando o Frontend (Streamlit)
-Em um **novo terminal** na raiz do projeto:
+**Terminal 2 (Frontend):**
 ```bash
 source backend/.venv/bin/activate
 streamlit run frontend/app.py
 ```
+
+---
+
+## ☁️ Transição para a Nuvem (Fase 3 - Scalability)
+O Ovid.IA foi concebido seguindo os princípios do *12-Factor App*, facilitando o Lift-and-Shift para a Amazon Web Services (AWS):
+- **FastAPI/Streamlit:** Hospedagem direta no *Amazon ECS* via instâncias *Fargate* ou *EC2*.
+- **Postgres:** Migração *plug-and-play* para *Amazon RDS for PostgreSQL* (que já possui suporte nativo ao pgvector).
+- **Ollama:** Substituição pelo framework corporativo `vLLM` orquestrado em Clusters GPU (`g5.xlarge`) dentro de sub-redes totalmente privadas (VPC Isolada).
