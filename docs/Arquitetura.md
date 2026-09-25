@@ -50,8 +50,8 @@ graph TD
 
     %% ETL Externo
     subgraph ETL ["Pipeline ETL (Segurança Anti-Apagão)"]
-        ETL_Jurisprudencia[etl_jurisprudencia.py (HF)]
-        ETL_Acervo[ETL Acervo Interno (Scripts 01 e 02)]
+        ETL_Jurisprudencia["etl_jurisprudencia.py (HF)"]
+        ETL_Acervo["ETL Acervo Interno (Scripts 01 e 02)"]
         Parquet_Fallback[(Backup Local .parquet)]
     end
 
@@ -115,6 +115,6 @@ graph TD
     Router_Auditoria,Router_Prazos,Router_RAG,Router_Intake,Parser,Calculadora class backend;
     Ollama_Hermes,Ollama_Qwen,LangTool,Embeddings class ia;
     ChromaDB,Parquet_Fallback class db;
-    ETL_Script class backend;
+    ETL_Jurisprudencia,ETL_Acervo class backend;
 
 ```
