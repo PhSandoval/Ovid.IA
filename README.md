@@ -54,6 +54,13 @@ O **Módulo de Prazos Processuais** introduz o conceito de **Cérebro Híbrido**
   - **1º Passo (NER - Inteligência):** A IA atua **exclusivamente** como uma Extratora de Entidades (NER). Ela lê a intimação e "pesca" a Data de Publicação e o Prazo Bruto (ex: `15`).
   - **2º Passo (Motor Determinístico):** O código Python (backend) toma a frente, utilizando a biblioteca nativa `datetime`. Ele adiciona 1 dia ao prazo de início e itera num laço `while`, avançando o relógio temporal e pulando matematicamente os Sábados e Domingos até alcançar os `15` dias exigidos.
 
+
+### 6. Módulo de Padronização de Peças (Em Desenvolvimento - Agentic Workflow)
+Este será o módulo mais avançado do sistema. Ele permite que o LLM redija peças inteiras (Contratos, Distratos, Iniciais) usando a própria base de dados do escritório como "Padrão Ouro".
+- **ETL Interno (Acervo):** Scripts de ingestão (`etl/01_gerar_inventario_acervo.py` e `etl/02_injetar_acervo_banco_vetorial.py`) vasculham os diretórios internos do escritório e extraem metadados profundos (Categoria, Tipo de Documento, Ano e Status Padrão Ouro).
+- **Aceleração Apple Silicon:** O pipeline de ingestão utiliza processamento matricial em GPU (MPS - Metal Performance Shaders) para vetorizar milhares de documentos em segundos.
+- **Agentic Workflow (Circuit Breaker):** Quando um advogado pede uma peça, o sistema filtra rigorosamente o ChromaDB para puxar o molde correto. O texto gerado pelo LLM é então testado por um *LLM-as-a-Judge*. Se a peça não estiver perfeita, ela volta para o gerador corrigir (com limite de 3 tentativas para evitar loop infinito).
+
 ## ⚙️ Como Executar
 
 ### 1. Requisitos

@@ -20,6 +20,7 @@ graph TD
         UI_Prazos[Gestão de Prazos]
         UI_RAG[Busca de Jurisprudência]
         UI_Intake[Resumo de Autos]
+        UI_Padronizacao[Módulo de Padronização de Peças]
     end
 
     %% Backend
@@ -28,6 +29,7 @@ graph TD
         Router_Prazos[/prazos/extrair/]
         Router_RAG[/jurisprudencia/buscar/]
         Router_Intake[/autos/resumir/]
+        Router_Padronizacao[/pecas/gerar/]
         
         Parser[Motor OCR / PDFPlumber]
         Calculadora[Motor Determinístico - Datas]
@@ -48,29 +50,39 @@ graph TD
 
     %% ETL Externo
     subgraph ETL ["Pipeline ETL (Segurança Anti-Apagão)"]
-        ETL_Script[etl_jurisprudencia.py]
+        ETL_Jurisprudencia[etl_jurisprudencia.py (HF)]
+        ETL_Acervo[ETL Acervo Interno (Scripts 01 e 02)]
         Parquet_Fallback[(Backup Local .parquet)]
     end
 
     %% Fontes Externas
     HF[(Hugging Face - Repojus)]:::external
+    AcervoLocal[(Arquivos Locais - Acervo_Clientes)]:::external
 
     %% Conexões do Usuário
     User -->|PDF Contrato| UI_Auditoria
     User -->|PDF Intimação| UI_Prazos
     User -->|Tese Jurídica| UI_RAG
     User -->|PDF Inicial| UI_Intake
+    User -->|Pedido de Peça| UI_Padronizacao
 
     %% Conexões Frontend -> Backend
     UI_Auditoria -->|POST (Stream)| Router_Auditoria
     UI_Prazos -->|POST| Router_Prazos
     UI_RAG -->|POST (Stream)| Router_RAG
     UI_Intake -->|POST| Router_Intake
+    UI_Padronizacao -->|POST (Agentic Loop)| Router_Padronizacao
 
     %% Conexões Intake (Novo)
     Router_Intake -->|Lê PDF Inteiro| Parser
     Parser -->|Contexto Bruto| Ollama_Hermes
     Ollama_Hermes -.->|JSON Estruturado| UI_Intake
+
+    %% Conexões Padronização (Agentic Workflow)
+    Router_Padronizacao -->|Filtro Metadado| ChromaDB
+    ChromaDB -.->|Molde Padrão Ouro| Router_Padronizacao
+    Router_Padronizacao <-->|Loop Circuit Breaker| Ollama_Hermes
+    Ollama_Hermes -.->|DOCX Final| UI_Padronizacao
 
     %% Conexões Auditoria
     Router_Auditoria -->|Lotes/Overlap| Parser
@@ -84,9 +96,11 @@ graph TD
     Calculadora -.->|Data Fatal (Pula FDS)| UI_Prazos
 
     %% Conexões ETL e RAG
-    HF -->|Download API Oficial| ETL_Script
-    ETL_Script -->|Falha na Rede| Parquet_Fallback
-    ETL_Script -->|Ementas| Embeddings
+    HF -->|Download API Oficial| ETL_Jurisprudencia
+    AcervoLocal -->|Extração PDF/DOCX| ETL_Acervo
+    ETL_Jurisprudencia -->|Falha na Rede| Parquet_Fallback
+    ETL_Jurisprudencia -->|Ementas| Embeddings
+    ETL_Acervo -->|Textos + Metadados Ricos (GPU MPS)| Embeddings
     Embeddings -->|Vetores 384d| ChromaDB
 
     Router_RAG -->|1. Converte Pergunta| Embeddings
