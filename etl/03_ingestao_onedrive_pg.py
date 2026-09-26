@@ -77,6 +77,21 @@ def executar_pipeline(folder_id: str = "root"):
     print(f"🚀 Iniciando Pipeline ETL Air-Gap. Lendo pasta: {folder_id}")
     
     conn = obter_conexao()
+    
+    # Assegura que a extensão pgvector e a tabela existem antes de registrar
+    cur = conn.cursor()
+    cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS jurisprudencia (
+            id UUID PRIMARY KEY,
+            texto TEXT NOT NULL,
+            metadados JSONB,
+            vetor VECTOR
+        );
+    """)
+    conn.commit()
+    cur.close()
+    
     register_vector(conn)
     
     # 1. Lista os arquivos do OneDrive via Graph API
